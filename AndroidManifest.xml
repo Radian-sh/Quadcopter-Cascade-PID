@@ -4,6 +4,9 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
 
+    <!-- ADDED: Required for SENSOR_DELAY_FASTEST on modern Android versions -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
