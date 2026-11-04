@@ -12,7 +12,6 @@ import com.hoho.android.usbserial.driver.UsbSerialProber
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.IOException
-import java.util.Locale
 
 class UsbSerialController(private val context: Context) {
 
@@ -28,8 +27,6 @@ class UsbSerialController(private val context: Context) {
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected
-
-    private var currentBaudRate: Int = 115200
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -47,6 +44,8 @@ class UsbSerialController(private val context: Context) {
             }
         }
     }
+
+    private var currentBaudRate: Int = 115200
 
     init {
         val filter = IntentFilter().apply {
@@ -73,6 +72,7 @@ class UsbSerialController(private val context: Context) {
 
         if (!usbManager.hasPermission(device)) {
             _connectionStatus.value = "Requesting USB Permission..."
+            // FIXED: Changed MutableStateFlow to S (Android 12 / API 31)
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 PendingIntent.FLAG_MUTABLE
             } else 0
@@ -99,6 +99,7 @@ class UsbSerialController(private val context: Context) {
             val port = driver.ports[0]
             port.open(connection)
             port.setParameters(baudRate, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            // Required for STM32 Native USB CDC & Arduino Leonardo/Micro to start streaming:
             port.dtr = true
             port.rts = true
 
@@ -113,15 +114,13 @@ class UsbSerialController(private val context: Context) {
 
     /**
      * Sends the 3 computed Torque outputs to Arduino/STM32 in a clean packet:
-     * Format: "<pitchTorque,rollTorque,yawTorque>
-"
+     * Format: "<pitchTorque,rollTorque,yawTorque>\n"
      */
     fun sendTorques(pitchTorque: Double, rollTorque: Double, yawTorque: Double) {
         val port = serialPort ?: return
         if (!_isConnected.value) return
 
-        val packet = String.format(Locale.US, "<%.2f,%.2f,%.2f>
-", pitchTorque, rollTorque, yawTorque)
+        val packet = "<${"%.2f".format(pitchTorque)},${"%.2f".format(rollTorque)},${"%.2f".format(yawTorque)}>\n"
         try {
             port.write(packet.toByteArray(Charsets.UTF_8), 10)
         } catch (e: IOException) {
