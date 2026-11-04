@@ -18,20 +18,41 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
-    private lateinit var flightController: QuadcopterFlightController
+    private var flightController: QuadcopterFlightController? = null
+    private var crashLog: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        flightController = QuadcopterFlightController(this)
-        flightController.startController()
+        
+        // CRASH CATCHER: Attempts to start the controller, captures the exact error if it fails
+        try {
+            flightController = QuadcopterFlightController(this)
+            flightController?.startController()
+        } catch (e: Exception) {
+            crashLog = e.stackTraceToString()
+        }
 
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    UnifiedQuadcopterScreen(flightController)
+                    if (crashLog != null) {
+                        // CRASH SCREEN - Displays the exact logcat error on the phone
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(16.dp)
+                        ) {
+                            Text("APP CRASHED!", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(crashLog!!, color = Color.DarkGray, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                        }
+                    } else {
+                        // NORMAL SCREEN
+                        flightController?.let { UnifiedQuadcopterScreen(it) }
+                    }
                 }
             }
         }
@@ -39,9 +60,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        flightController.stopAll()
+        flightController?.stopAll()
     }
 }
+
+// =========================================================================
+// KEEP YOUR EXISTING UI COMPOSABLES BELOW THIS LINE
+// =========================================================================
 
 @Composable
 fun UnifiedQuadcopterScreen(fc: QuadcopterFlightController) {
@@ -57,9 +82,6 @@ fun UnifiedQuadcopterScreen(fc: QuadcopterFlightController) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // =====================================================================
-        // TOP BAR: USB OTG CONNECTION TO ARDUINO / STM32
-        // =====================================================================
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("USB Serial Connection (Arduino / STM32)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -92,39 +114,15 @@ fun UnifiedQuadcopterScreen(fc: QuadcopterFlightController) {
             }
         }
 
-        // =====================================================================
-        // ALL THREE ANGLES IN ONE UNIFIED SECTION VIEW
-        // =====================================================================
-        AxisControlSection(
-            title = "SECTION 1: PITCH AXIS CONTROL",
-            axis = fc.pitchController,
-            telemetry = telemetry.pitch
-        )
-
-        AxisControlSection(
-            title = "SECTION 2: ROLL AXIS CONTROL",
-            axis = fc.rollController,
-            telemetry = telemetry.roll
-        )
-
-        AxisControlSection(
-            title = "SECTION 3: YAW AXIS CONTROL",
-            axis = fc.yawController,
-            telemetry = telemetry.yaw
-        )
+        AxisControlSection("SECTION 1: PITCH AXIS CONTROL", fc.pitchController, telemetry.pitch)
+        AxisControlSection("SECTION 2: ROLL AXIS CONTROL", fc.rollController, telemetry.roll)
+        AxisControlSection("SECTION 3: YAW AXIS CONTROL", fc.yawController, telemetry.yaw)
     }
 }
 
 @Composable
-fun AxisControlSection(
-    title: String,
-    axis: CascadeAxisController,
-    telemetry: AxisTelemetry
-) {
-    // Desired Reference
+fun AxisControlSection(title: String, axis: CascadeAxisController, telemetry: AxisTelemetry) {
     var desiredAngle by remember(axis) { mutableStateOf(axis.desiredAngle.toString()) }
-
-    // Inner PID States
     var kpInner by remember(axis) { mutableStateOf(axis.anglePID.kp.toString()) }
     var kiInner by remember(axis) { mutableStateOf(axis.anglePID.ki.toString()) }
     var kdInner by remember(axis) { mutableStateOf(axis.anglePID.kd.toString()) }
@@ -133,7 +131,6 @@ fun AxisControlSection(
     var maxSatInner by remember(axis) { mutableStateOf(axis.anglePID.maxOutput.toString()) }
     var enableInner by remember(axis) { mutableStateOf(axis.enableAngle) }
 
-    // Outer PID States
     var kpOuter by remember(axis) { mutableStateOf(axis.ratePID.kp.toString()) }
     var kiOuter by remember(axis) { mutableStateOf(axis.ratePID.ki.toString()) }
     var kdOuter by remember(axis) { mutableStateOf(axis.ratePID.kd.toString()) }
@@ -142,47 +139,19 @@ fun AxisControlSection(
     var maxSatOuter by remember(axis) { mutableStateOf(axis.ratePID.maxOutput.toString()) }
     var enableOuter by remember(axis) { mutableStateOf(axis.enableRate) }
 
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = MaterialTheme.colorScheme.primary)
 
-            // 1. TWO READOUT WINDOWS: ANGLE & ANGULAR SPEED (RATE)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                TelemetryWindow(
-                    label = "ANGLE (deg)",
-                    value = String.format(Locale.US, "%.2f°", telemetry.measuredAngle),
-                    subLabel = String.format(Locale.US, "Err: %.2f°", telemetry.angleError),
-                    modifier = Modifier.weight(1f)
-                )
-                TelemetryWindow(
-                    label = "ANGULAR SPEED (deg/s)",
-                    value = String.format(Locale.US, "%.2f °/s", telemetry.measuredRate),
-                    subLabel = String.format(Locale.US, "Torque: %.2f", telemetry.torqueOutput),
-                    modifier = Modifier.weight(1f)
-                )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TelemetryWindow("ANGLE (deg)", "%.2f°".format(telemetry.measuredAngle), "Err: ${"%.2f".format(telemetry.angleError)}°", Modifier.weight(1f))
+                TelemetryWindow("ANGULAR SPEED (deg/s)", "%.2f °/s".format(telemetry.measuredRate), "Torque: ${"%.2f".format(telemetry.torqueOutput)}", Modifier.weight(1f))
             }
 
-            // 2. DESIRED ANGLE SETPOINT
-            OutlinedTextField(
-                value = desiredAngle,
-                onValueChange = { desiredAngle = it },
-                label = { Text("Desired Angle Setpoint (deg)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+            OutlinedTextField(desiredAngle, { desiredAngle = it }, label = { Text("Desired Angle Setpoint (deg)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
 
             HorizontalDivider()
 
-            // 3. INNER PID CONFIGURATION (ANGLE LOOP)
             Text("Inner PID (Angle Control)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(kpInner, { kpInner = it }, label = { Text("Kp") }, modifier = Modifier.weight(1f), singleLine = true)
@@ -197,7 +166,6 @@ fun AxisControlSection(
 
             HorizontalDivider()
 
-            // 4. OUTER PID CONFIGURATION (RATE -> TORQUE LOOP)
             Text("Outer PID (Angular Rate -> Torque)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(kpOuter, { kpOuter = it }, label = { Text("Kp Rate") }, modifier = Modifier.weight(1f), singleLine = true)
@@ -210,12 +178,7 @@ fun AxisControlSection(
                 OutlinedTextField(dtOuter, { dtOuter = it }, label = { Text("Ts (ms)") }, modifier = Modifier.weight(1f), singleLine = true)
             }
 
-            // 5. ENABLE SWITCHES & APPLY BUTTON
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = enableInner, onCheckedChange = { enableInner = it })
                     Text("Inner PID", fontSize = 13.sp)
@@ -225,28 +188,18 @@ fun AxisControlSection(
                     Text("Outer PID", fontSize = 13.sp)
                 }
                 Button(onClick = {
-                    // Update Desired Setpoint
                     axis.desiredAngle = desiredAngle.toDoubleOrNull() ?: 0.0
-
-                    // Update Inner PID
                     axis.anglePID.kp = kpInner.toDoubleOrNull() ?: 0.0
                     axis.anglePID.ki = kiInner.toDoubleOrNull() ?: 0.0
                     axis.anglePID.kd = kdInner.toDoubleOrNull() ?: 0.0
-                    axis.anglePID.setSaturationLimits(
-                        minSatInner.toDoubleOrNull() ?: -250.0,
-                        maxSatInner.toDoubleOrNull() ?: 250.0
-                    )
+                    axis.anglePID.setSaturationLimits(minSatInner.toDoubleOrNull() ?: -250.0, maxSatInner.toDoubleOrNull() ?: 250.0)
                     axis.sampleTimeAngleMs = (dtInner.toLongOrNull() ?: 10L).coerceAtLeast(1L)
                     if (enableInner) axis.enableAngle = true else axis.stopAngle()
 
-                    // Update Outer PID
                     axis.ratePID.kp = kpOuter.toDoubleOrNull() ?: 0.0
                     axis.ratePID.ki = kiOuter.toDoubleOrNull() ?: 0.0
                     axis.ratePID.kd = kdOuter.toDoubleOrNull() ?: 0.0
-                    axis.ratePID.setSaturationLimits(
-                        minSatOuter.toDoubleOrNull() ?: -1000.0,
-                        maxSatOuter.toDoubleOrNull() ?: 1000.0
-                    )
+                    axis.ratePID.setSaturationLimits(minSatOuter.toDoubleOrNull() ?: -1000.0, maxSatOuter.toDoubleOrNull() ?: 1000.0)
                     axis.sampleTimeRateMs = (dtOuter.toLongOrNull() ?: 10L).coerceAtLeast(1L)
                     if (enableOuter) axis.enableRate = true else axis.stopRate()
                 }) {
@@ -260,10 +213,7 @@ fun AxisControlSection(
 @Composable
 fun TelemetryWindow(label: String, value: String, subLabel: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
-            .border(1.dp, Color(0xFF424242), RoundedCornerShape(8.dp))
-            .padding(10.dp),
+        modifier = modifier.background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp)).border(1.dp, Color(0xFF424242), RoundedCornerShape(8.dp)).padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(label, color = Color(0xFF90CAF9), fontSize = 11.sp, fontWeight = FontWeight.Bold)
