@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var flightController: QuadcopterFlightController? = null
@@ -25,7 +26,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // CRASH CATCHER: Attempts to start the controller, captures the exact error if it fails
         try {
             flightController = QuadcopterFlightController(this)
@@ -38,7 +39,6 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     if (crashLog != null) {
-                        // CRASH SCREEN - Displays the exact logcat error on the phone
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -50,7 +50,6 @@ class MainActivity : ComponentActivity() {
                             Text(crashLog!!, color = Color.DarkGray, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                         }
                     } else {
-                        // NORMAL SCREEN
                         flightController?.let { UnifiedQuadcopterScreen(it) }
                     }
                 }
@@ -63,10 +62,6 @@ class MainActivity : ComponentActivity() {
         flightController?.stopAll()
     }
 }
-
-// =========================================================================
-// KEEP YOUR EXISTING UI COMPOSABLES BELOW THIS LINE
-// =========================================================================
 
 @Composable
 fun UnifiedQuadcopterScreen(fc: QuadcopterFlightController) {
@@ -143,15 +138,51 @@ fun AxisControlSection(title: String, axis: CascadeAxisController, telemetry: Ax
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = MaterialTheme.colorScheme.primary)
 
+            // 1. TOP WINDOWS: ANGLE & ANGULAR SPEED (Updated every 400ms)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TelemetryWindow("ANGLE (deg)", "%.2f°".format(telemetry.measuredAngle), "Err: ${"%.2f".format(telemetry.angleError)}°", Modifier.weight(1f))
-                TelemetryWindow("ANGULAR SPEED (deg/s)", "%.2f °/s".format(telemetry.measuredRate), "Torque: ${"%.2f".format(telemetry.torqueOutput)}", Modifier.weight(1f))
+                TelemetryWindow(
+                    label = "ANGLE (deg)",
+                    value = String.format(Locale.US, "%.2f°", telemetry.measuredAngle),
+                    subLabel = String.format(Locale.US, "Target: %.2f°", axis.desiredAngle),
+                    modifier = Modifier.weight(1f)
+                )
+                TelemetryWindow(
+                    label = "ANGULAR SPEED (deg/s)",
+                    value = String.format(Locale.US, "%.2f °/s", telemetry.measuredRate),
+                    subLabel = String.format(Locale.US, "Rate Out: %.2f", telemetry.anglePIDOutput),
+                    modifier = Modifier.weight(1f)
+                )
             }
 
-            OutlinedTextField(desiredAngle, { desiredAngle = it }, label = { Text("Desired Angle Setpoint (deg)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            // 2. DEDICATED BOX FOR ANGLE ERROR (Desired Angle - Measured Angle)
+            TelemetryWindow(
+                label = "${axis.axisName} ANGLE ERROR (Desired - Measured)",
+                value = String.format(Locale.US, "%.2f°", telemetry.angleError),
+                subLabel = String.format(
+                    Locale.US,
+                    "Desired: %.2f° | Measured: %.2f°",
+                    axis.desiredAngle,
+                    telemetry.measuredAngle
+                ),
+                valueColor = Color(0xFFFFD54F), // Amber highlight for Error box
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // 3. DESIRED ANGLE SETPOINT INPUT
+            OutlinedTextField(
+                value = desiredAngle,
+                onValueChange = {
+                    desiredAngle = it
+                    axis.desiredAngle = it.toDoubleOrNull() ?: 0.0
+                },
+                label = { Text("Desired Angle Setpoint (deg)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
 
             HorizontalDivider()
 
+            // 4. INNER PID (ANGLE LOOP)
             Text("Inner PID (Angle Control)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(kpInner, { kpInner = it }, label = { Text("Kp") }, modifier = Modifier.weight(1f), singleLine = true)
@@ -166,6 +197,7 @@ fun AxisControlSection(title: String, axis: CascadeAxisController, telemetry: Ax
 
             HorizontalDivider()
 
+            // 5. OUTER PID (ANGULAR RATE -> TORQUE LOOP)
             Text("Outer PID (Angular Rate -> Torque)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(kpOuter, { kpOuter = it }, label = { Text("Kp Rate") }, modifier = Modifier.weight(1f), singleLine = true)
@@ -178,6 +210,7 @@ fun AxisControlSection(title: String, axis: CascadeAxisController, telemetry: Ax
                 OutlinedTextField(dtOuter, { dtOuter = it }, label = { Text("Ts (ms)") }, modifier = Modifier.weight(1f), singleLine = true)
             }
 
+            // 6. ENABLE CHECKBOXES & APPLY BUTTON
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = enableInner, onCheckedChange = { enableInner = it })
@@ -206,19 +239,39 @@ fun AxisControlSection(title: String, axis: CascadeAxisController, telemetry: Ax
                     Text("Apply ${axis.axisName}")
                 }
             }
+
+            HorizontalDivider()
+
+            // 7. DEDICATED BOX BELOW THE PID WINDOW FOR FINAL APPLIED OUTPUT TORQUE
+            TelemetryWindow(
+                label = "FINAL APPLIED OUTPUT TORQUE (${axis.axisName})",
+                value = String.format(Locale.US, "%.2f", telemetry.torqueOutput),
+                subLabel = String.format(Locale.US, "Rate Error: %.2f °/s", telemetry.rateError),
+                valueColor = Color(0xFF40C4FF), // Cyan highlight for Final Applied Torque
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
 
 @Composable
-fun TelemetryWindow(label: String, value: String, subLabel: String, modifier: Modifier = Modifier) {
+fun TelemetryWindow(
+    label: String,
+    value: String,
+    subLabel: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = Color(0xFF00E676)
+) {
     Column(
-        modifier = modifier.background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp)).border(1.dp, Color(0xFF424242), RoundedCornerShape(8.dp)).padding(10.dp),
+        modifier = modifier
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp))
+            .border(1.dp, Color(0xFF424242), RoundedCornerShape(8.dp))
+            .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(label, color = Color(0xFF90CAF9), fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(4.dp))
-        Text(value, color = Color(0xFF00E676), fontSize = 20.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+        Text(value, color = valueColor, fontSize = 20.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(2.dp))
         Text(subLabel, color = Color(0xFFBDBDBD), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     }
