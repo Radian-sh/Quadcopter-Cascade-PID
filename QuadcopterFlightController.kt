@@ -26,6 +26,11 @@ data class QuadcopterTelemetry(
 
 class QuadcopterFlightController(context: Context) : SensorEventListener {
 
+    companion object {
+        // 400 milliseconds refresh period for display windows
+        private const val UI_UPDATE_INTERVAL_MS = 400L
+    }
+
     val pitchController = CascadeAxisController("PITCH")
     val rollController = CascadeAxisController("ROLL")
     val yawController = CascadeAxisController("YAW")
@@ -59,10 +64,12 @@ class QuadcopterFlightController(context: Context) : SensorEventListener {
             var lastRollRateTick = System.currentTimeMillis()
             var lastYawRateTick = System.currentTimeMillis()
 
+            var lastUiUpdateTick = 0L
+
             while (isActive) {
                 val now = System.currentTimeMillis()
 
-                // Independent Inner Angle PID Loops
+                // 1. Independent Inner Angle PID Loops (Real-time execution)
                 if (now - lastPitchAngleTick >= pitchController.sampleTimeAngleMs) {
                     pitchController.stepAngle(angles[1])
                     lastPitchAngleTick = now
@@ -76,7 +83,7 @@ class QuadcopterFlightController(context: Context) : SensorEventListener {
                     lastYawAngleTick = now
                 }
 
-                // Independent Outer Rate -> Torque PID Loops
+                // 2. Independent Outer Rate -> Torque PID Loops (Real-time execution)
                 var rateUpdated = false
                 if (now - lastPitchRateTick >= pitchController.sampleTimeRateMs) {
                     pitchController.stepRate(rates[1])
@@ -94,20 +101,23 @@ class QuadcopterFlightController(context: Context) : SensorEventListener {
                     rateUpdated = true
                 }
 
+                // Send computed Torques over USB OTG at real-time control loop rate
                 if (rateUpdated) {
-                    // Send computed Torques over USB OTG to Arduino / STM32
                     usbController.sendTorques(
                         pitchTorque = pitchController.ratePID.currentOutput,
                         rollTorque = rollController.ratePID.currentOutput,
                         yawTorque = yawController.ratePID.currentOutput
                     )
+                }
 
-                    // Update UI Telemetry
+                // 3. Update UI Display Windows every 400 milliseconds
+                if (now - lastUiUpdateTick >= UI_UPDATE_INTERVAL_MS) {
                     _telemetry.value = QuadcopterTelemetry(
                         pitch = buildTelemetry(pitchController, angles[1], rates[1]),
                         roll = buildTelemetry(rollController, angles[0], rates[0]),
                         yaw = buildTelemetry(yawController, angles[2], rates[2])
                     )
+                    lastUiUpdateTick = now
                 }
 
                 delay(1L)
@@ -124,14 +134,23 @@ class QuadcopterFlightController(context: Context) : SensorEventListener {
         sensorManager?.unregisterListener(this)
     }
 
-    private fun buildTelemetry(ctrl: CascadeAxisController, angle: Double, rate: Double) = AxisTelemetry(
-        measuredAngle = angle,
-        measuredRate = rate,
-        angleError = ctrl.anglePID.currentError,
-        anglePIDOutput = ctrl.anglePID.currentOutput,
-        rateError = ctrl.ratePID.currentError,
-        torqueOutput = ctrl.ratePID.currentOutput
-    )
+    private fun buildTelemetry(ctrl: CascadeAxisController, angle: Double, rate: Double): AxisTelemetry {
+        // Compute live angle error (Desired - Measured) even if Inner PID is disabled
+        val liveAngleError = if (ctrl.enableAngle) {
+            ctrl.anglePID.currentError
+        } else {
+            ctrl.desiredAngle - angle
+        }
+
+        return AxisTelemetry(
+            measuredAngle = angle,
+            measuredRate = rate,
+            angleError = liveAngleError,
+            anglePIDOutput = ctrl.anglePID.currentOutput,
+            rateError = ctrl.ratePID.currentError,
+            torqueOutput = if (ctrl.enableRate) ctrl.ratePID.currentOutput else 0.0
+        )
+    }
 
     private fun registerSensors() {
         rotationSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) }
