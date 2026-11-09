@@ -135,7 +135,6 @@ class QuadcopterFlightController(context: Context) : SensorEventListener {
     }
 
     private fun buildTelemetry(ctrl: CascadeAxisController, angle: Double, rate: Double): AxisTelemetry {
-        // Compute live angle error (Desired - Measured) even if Inner PID is disabled
         val liveAngleError = if (ctrl.enableAngle) {
             ctrl.anglePID.currentError
         } else {
@@ -163,13 +162,14 @@ class QuadcopterFlightController(context: Context) : SensorEventListener {
             val orientation = FloatArray(3)
             SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
             SensorManager.getOrientation(rotationMatrix, orientation)
-            angles[0] = Math.toDegrees(orientation[2].toDouble()) // Roll
-            angles[1] = Math.toDegrees(orientation[1].toDouble()) // Pitch
-            angles[2] = Math.toDegrees(orientation[0].toDouble()) // Yaw
+            angles[0] = Math.toDegrees(orientation[2].toDouble()) // Roll (Y-axis rotation)
+            angles[1] = Math.toDegrees(orientation[1].toDouble()) // Pitch (X-axis rotation)
+            angles[2] = Math.toDegrees(orientation[0].toDouble()) // Yaw (Z-axis rotation)
         } else if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-            rates[0] = Math.toDegrees(event.values[0].toDouble()) // Roll Rate
-            rates[1] = Math.toDegrees(event.values[1].toDouble()) // Pitch Rate
-            rates[2] = Math.toDegrees(event.values[2].toDouble()) // Yaw Rate
+            // FIXED: Swapped values[1] and values[0] so Roll Rate and Pitch Rate match their axes
+            rates[0] = Math.toDegrees(event.values[1].toDouble()) // Roll Rate (Y-axis gyro)
+            rates[1] = Math.toDegrees(event.values[0].toDouble()) // Pitch Rate (X-axis gyro)
+            rates[2] = Math.toDegrees(event.values[2].toDouble()) // Yaw Rate (Z-axis gyro)
         }
     }
 
